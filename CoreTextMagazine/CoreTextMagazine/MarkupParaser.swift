@@ -1,0 +1,136 @@
+//
+//  MarkupParaser.swift
+//  CoreTextMagazine
+//
+//  Created by 韩志峰 on 2021/1/4.
+//
+
+import UIKit
+import CoreText
+class MarkupParaser: NSObject {
+    var color: UIColor = .black
+    var fontName: String = "Arial"
+    var attrString: NSMutableAttributedString!
+    var images: [[String: Any]] = []
+    override init() {
+        super.init()
+    }
+    func paraseMarkup(_ markup: String){
+        attrString = NSMutableAttributedString.init(string: "")
+        do {
+            let regex = try NSRegularExpression.init(pattern: "(.*?)(<[^>]+>|\\Z)", options: [.caseInsensitive,.dotMatchesLineSeparators])
+            let chunks = regex.matches(in: markup, options: NSRegularExpression.MatchingOptions(rawValue: 0), range: NSRange.init(location: 0, length: markup.count))
+            
+            let defaultFont: UIFont = .systemFont(ofSize: UIScreen.main.bounds.size.height / 40)
+            for chunk in chunks{
+                guard let markupRange = markup.range(frome: chunk.range) else { continue }
+                let parts = markup[markupRange].components(separatedBy: "<")
+                let font = UIFont.init(name: fontName, size: UIScreen.main.bounds.size.height / 40) ?? defaultFont
+                let attrs = [NSAttributedStringKey.foregroundColor : color,NSAttributedStringKey.font: font] as [NSAttributedStringKey: Any]
+                let text = NSAttributedString.init(string: parts[0], attributes: attrs)
+                attrString.append(text)
+                // 1
+                if parts.count <= 1 {
+                  continue
+                }
+                let tag = parts[1]
+                //2
+                if tag.hasPrefix("font") {
+                  let colorRegex = try NSRegularExpression(pattern: "(?<=color=\")\\w+",
+                                                           options: NSRegularExpression.Options(rawValue: 0))
+                  colorRegex.enumerateMatches(in: tag,
+                    options: NSRegularExpression.MatchingOptions(rawValue: 0),
+                    range: NSMakeRange(0, tag.characters.count)) { (match, _, _) in
+                      //3
+                      if let match = match,
+                         let range = tag.range(frome: match.range) {
+                          let colorSel = NSSelectorFromString(tag[range]+"Color")
+                          color = UIColor.perform(colorSel).takeRetainedValue() as? UIColor ?? .black
+                      }
+                  }
+                  //5
+                  let faceRegex = try NSRegularExpression(pattern: "(?<=face=\")[^\"]+",
+                                                          options: NSRegularExpression.Options(rawValue: 0))
+                  faceRegex.enumerateMatches(in: tag,
+                    options: NSRegularExpression.MatchingOptions(rawValue: 0),
+                    range: NSMakeRange(0, tag.characters.count)) { (match, _, _) in
+
+                      if let match = match,
+                        let range = tag.range(frome: match.range) {
+                          fontName = String(tag[range])
+                      }
+                  }
+                } //end of font parsing
+                else if tag.hasPrefix("img") {
+                      
+                  var filename:String = ""
+                  let imageRegex = try NSRegularExpression(pattern: "(?<=src=\")[^\"]+",
+                                                           options: NSRegularExpression.Options(rawValue: 0))
+                  imageRegex.enumerateMatches(in: tag,
+                    options: NSRegularExpression.MatchingOptions(rawValue: 0),
+                    range: NSMakeRange(0, tag.characters.count)) { (match, _, _) in
+
+                    if let match = match,
+                      let range = tag.range(frome: match.range) {
+                        filename = String(tag[range])
+                    }
+                  }
+                  //2
+                  let settings = CTSetting()
+                  var width: CGFloat = settings.columnRect.width
+                  var height: CGFloat = 0
+
+                  if let image = UIImage(named: filename) {
+                    height = width * (image.size.height / image.size.width)
+                    // 3
+                    if height > settings.columnRect.height - font.lineHeight {
+                      height = settings.columnRect.height - font.lineHeight
+                      width = height * (image.size.width / image.size.height)
+                    }
+                  }
+                    images += [["width": NSNumber(value: Float(width)),
+                               "height": NSNumber(value: Float(height)),
+                               "filename":filename,
+                               "location": NSNumber(value: attrString.length)]]
+                    struct RunStruct{
+                        let ascent: CGFloat
+                        let descent: CGFloat
+                        let width: CGFloat
+                    }
+                    let extentBuffer = UnsafeMutablePointer<RunStruct>.allocate(capacity: 1)
+                    extentBuffer.initialize(to: RunStruct.init(ascent: height, descent: 0, width: width))
+                    var callback = CTRunDelegateCallbacks(version: kCTRunDelegateVersion1) { (pointer) in
+                        
+                    } getAscent: { (pointer) -> CGFloat in
+                        let d = pointer.assumingMemoryBound(to: RunStruct.self)
+                        return d.pointee.ascent
+                    } getDescent: { (pointer) -> CGFloat in
+                        let d = pointer.assumingMemoryBound(to: RunStruct.self)
+                        return d.pointee.descent
+                    } getWidth: { (pointer) -> CGFloat in
+                        let d = pointer.assumingMemoryBound(to: RunStruct.self)
+                        return d.pointee.width
+                    }
+                    let delegate = CTRunDelegateCreate(&callback, extentBuffer)
+                    let attrDictionaryDelegate = [(kCTRunDelegateAttributeName as NSAttributedStringKey) : (delegate as Any)]
+                    attrString.append(NSAttributedString.init(string: " ", attributes: attrDictionaryDelegate))
+                }
+                
+            }
+        } catch _ {
+            
+        }
+    }
+}
+
+extension String{
+    func range(frome range: NSRange) -> Range<String.Index>? {
+        guard let from16 = utf16.index(utf16.startIndex, offsetBy: range.location, limitedBy: utf16.endIndex),
+              let to16 = utf16.index(from16, offsetBy: range.length, limitedBy: utf16.endIndex),
+              let from = String.Index.init(from16, within: self),
+             let to = String.Index.init(to16, within: self)
+        else { return nil}
+        return from ..< to
+    }
+
+}
